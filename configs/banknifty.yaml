@@ -1,0 +1,12 @@
+underlying: BANKNIFTY
+source_timeframe: 1min
+session: Asia/Kolkata
+brick_sweeps:
+  fixed_percent: [0.05, 0.10, 0.15, 0.20, 0.25, 0.30]
+  prior_session_atr: [0.50, 0.75, 1.00, 1.25, 1.50]
+reversal_bricks: [1, 2]
+execution_candidates:
+  - monthly_futures
+  - monthly_synthetic
+reporting_capital: 600000
+
