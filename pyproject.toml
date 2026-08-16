@@ -7,7 +7,7 @@ name = "renko-strategy-research"
 version = "0.1.0"
 description = "Non-repainting Renko research for NIFTY and BANKNIFTY"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = ["PyYAML>=6.0"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
@@ -18,4 +18,3 @@ testpaths = ["tests"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
-

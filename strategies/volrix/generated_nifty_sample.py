@@ -1,0 +1,495 @@
+class NiftyRenkoSample(Strategy):
+    UNDERLYING = 'NIFTY'
+    TIMEFRAME = 5
+    BOX_MODE = 'atr'
+    FIXED_POINTS = 0.0
+    LTP_PERCENT = 0.0
+    ANNUAL_PERCENT = 0.0
+    ATR_PERIOD = 14
+    ATR_MULTIPLIER = 1.0
+    REVERSAL_BOXES = 2
+    SIGNAL_MODE = 'reversal'
+    EMA_PERIOD = 50
+    CONTINUATION_ANCHOR = 'ema_regime'
+    PULLBACK_MIN = 1
+    PULLBACK_MAX = 3
+    INITIAL_STOPS = ({'type': 'entry_percent', 'value': 0.5, 'multiplier': None, 'boxes': None}, {'type': 'box_offset', 'value': 3, 'multiplier': None, 'boxes': None})
+    TRAILING_STOPS = ({'type': 'atr_from_brick', 'value': None, 'multiplier': 2.0, 'boxes': None}, {'type': 'opposite_boxes', 'value': None, 'multiplier': None, 'boxes': 2}, {'type': 'price_box_offset', 'value': None, 'multiplier': None, 'boxes': 3})
+    EXPIRY = 'monthly'
+    LOTS = 2
+    POSITIONAL = True
+    MAX_ENTRIES = 0
+    CUTOFF_HOUR = -1
+    CUTOFF_MINUTE = -1
+    EXIT_HOUR = 15
+    EXIT_MINUTE = 28
+    TICK_SIZE = 0.05
+
+    def init(self):
+        self._continueVars = True
+        self.actions_all = {"act_entry": {"trigger": False, "legs": []}}
+        self.chart = self._new_chart()
+        self.next_chart = self._new_chart()
+        self.annual_closes = {}
+        self.direction = 0
+        self.entries_today = 0
+        self.last_box_size = None
+        self.risk_entry = None
+        self.risk_best = None
+        self.risk_initial = {}
+        self.risk_trailing = {}
+        self.risk_opposite = 0
+        self.last_processed = None
+        self.next_last_processed = None
+        self.pending_monthly_promotion = False
+        self.day_closed = False
+
+    def _new_chart(self):
+        return {
+            "last_close": None,
+            "direction": 0,
+            "sequence": 0,
+            "previous_source_close": None,
+            "atr": None,
+            "atr_count": 0,
+            "atr_seed": 0.0,
+            "ema": None,
+            "ema_count": 0,
+            "ema_wait": 0,
+            "last_traded": 0,
+            "anchor": 0,
+            "counter": 0,
+        }
+
+    def data_init(self):
+        warmup = max(self.ATR_PERIOD + 5, 20)
+        self.register_candle_data(
+            name="dt_fut",
+            data_type="fut",
+            exp={"expType": "monthly", "expNo": 0},
+            previous_trading_days=warmup,
+            timeframe=self.TIMEFRAME,
+            candle_type="candlestick",
+        )
+        self.register_candle_data(
+            name="dt_fut_1m",
+            data_type="fut",
+            exp={"expType": "monthly", "expNo": 0},
+            previous_trading_days=2,
+            timeframe=1,
+            candle_type="candlestick",
+        )
+        self.register_candle_data(
+            name="dt_fut_next",
+            data_type="fut",
+            exp={"expType": "monthly", "expNo": 1},
+            previous_trading_days=warmup,
+            timeframe=self.TIMEFRAME,
+            candle_type="candlestick",
+        )
+
+    def indicator_init(self):
+        pass
+
+    def onNewDay(self):
+        self.data_init()
+        self.indicator_init()
+        self.entries_today = 0
+        self.day_closed = False
+        if self.pending_monthly_promotion:
+            self.chart = self.next_chart
+            self.next_chart = self._new_chart()
+            self.last_processed = self.next_last_processed
+            self.next_last_processed = None
+            self.pending_monthly_promotion = False
+
+    def _round_tick(self, value):
+        return round(float(value) / self.TICK_SIZE) * self.TICK_SIZE
+
+    def _bar(self, data):
+        if len(data["close"]) == 0:
+            return None
+        return {
+            "timestamp": data["datetime"][-1],
+            "open": float(data["open"][-1]),
+            "high": float(data["high"][-1]),
+            "low": float(data["low"][-1]),
+            "close": float(data["close"][-1]),
+        }
+
+    def _size_before(self, state, bar):
+        if self.BOX_MODE == "fixed_points":
+            return self._round_tick(self.FIXED_POINTS)
+        if self.BOX_MODE == "ltp_percent":
+            if state["previous_source_close"] is None:
+                return None
+            return self._round_tick(
+                state["previous_source_close"] * self.LTP_PERCENT / 100.0
+            )
+        if self.BOX_MODE == "atr":
+            if state["atr_count"] < self.ATR_PERIOD or state["atr"] is None:
+                return None
+            return self._round_tick(state["atr"] * self.ATR_MULTIPLIER)
+        year = pd.Timestamp(bar["timestamp"]).year
+        if year - 1 not in self.annual_closes:
+            return None
+        return self._round_tick(
+            self.annual_closes[year - 1] * self.ANNUAL_PERCENT / 100.0
+        )
+
+    def _observe(self, state, bar, update_annual):
+        previous = state["previous_source_close"]
+        true_range = bar["high"] - bar["low"]
+        if previous is not None:
+            true_range = max(
+                true_range,
+                abs(bar["high"] - previous),
+                abs(bar["low"] - previous),
+            )
+        state["atr_count"] += 1
+        if state["atr_count"] <= self.ATR_PERIOD:
+            state["atr_seed"] += true_range
+            if state["atr_count"] == self.ATR_PERIOD:
+                state["atr"] = state["atr_seed"] / self.ATR_PERIOD
+        else:
+            state["atr"] = (
+                state["atr"] * (self.ATR_PERIOD - 1) + true_range
+            ) / self.ATR_PERIOD
+        state["previous_source_close"] = bar["close"]
+        if update_annual:
+            year = pd.Timestamp(bar["timestamp"]).year
+            self.annual_closes[year] = bar["close"]
+
+    def _make_bricks(self, state, bar, box_size):
+        if state["last_close"] is None:
+            state["last_close"] = bar["close"]
+            return [], 0
+        move = bar["close"] - state["last_close"]
+        candidate = 1 if move > 0 else -1 if move < 0 else 0
+        if candidate == 0:
+            return [], state["direction"]
+        threshold = box_size
+        if state["direction"] != 0 and candidate != state["direction"]:
+            threshold = box_size * self.REVERSAL_BOXES
+        if abs(move) < threshold:
+            return [], state["direction"]
+        previous_direction = state["direction"]
+        bricks = []
+        for count in range(100):
+            if abs(bar["close"] - state["last_close"]) < box_size:
+                break
+            brick_open = state["last_close"]
+            brick_close = brick_open + candidate * box_size
+            state["sequence"] += 1
+            bricks.append(
+                {
+                    "open": brick_open,
+                    "close": brick_close,
+                    "direction": candidate,
+                    "box_size": box_size,
+                    "sequence": state["sequence"],
+                }
+            )
+            state["last_close"] = brick_close
+        state["direction"] = candidate
+        return bricks, previous_direction
+
+    def _ema_update(self, state, close):
+        if self.EMA_PERIOD <= 0:
+            return None
+        state["ema_count"] += 1
+        if state["ema"] is None:
+            state["ema"] = close
+        else:
+            alpha = 2.0 / (self.EMA_PERIOD + 1.0)
+            state["ema"] = alpha * close + (1.0 - alpha) * state["ema"]
+        return state["ema"]
+
+    def _eligible(self, state, direction, close):
+        if self.EMA_PERIOD <= 0:
+            return True
+        if state["ema_count"] < self.EMA_PERIOD or state["ema"] is None:
+            return False
+        return close > state["ema"] if direction > 0 else close < state["ema"]
+
+    def _anchor(self, state, brick):
+        if self.CONTINUATION_ANCHOR == "last_traded_trend":
+            if state["anchor"] == 0:
+                state["anchor"] = state["last_traded"] or brick["direction"]
+            return state["anchor"]
+        if self.EMA_PERIOD <= 0 or state["ema_count"] < self.EMA_PERIOD:
+            return 0
+        regime = 1 if brick["close"] > state["ema"] else -1
+        if regime != state["anchor"]:
+            state["anchor"] = regime
+            state["counter"] = 0
+        return state["anchor"]
+
+    def _decision(self, state, bricks, previous_direction):
+        continuation = 0
+        for brick in bricks:
+            self._ema_update(state, brick["close"])
+            if self.SIGNAL_MODE == "pullback_continuation":
+                anchor = self._anchor(state, brick)
+                if anchor != 0:
+                    if brick["direction"] == anchor:
+                        if self.PULLBACK_MIN <= state["counter"] <= self.PULLBACK_MAX:
+                            continuation = anchor
+                        state["counter"] = 0
+                    else:
+                        state["counter"] += 1
+        final = bricks[-1]
+        direction = final["direction"]
+        eligible = self._eligible(state, direction, final["close"])
+        flipped = previous_direction != 0 and direction != previous_direction
+        if self.direction != 0 and direction == -self.direction and flipped:
+            if eligible:
+                state["ema_wait"] = 0
+                return "reverse", direction, "qualified Renko reversal"
+            state["ema_wait"] = direction
+            return "exit", 0, "EMA-rejected reversal exit-only"
+        if self.direction != 0:
+            return "none", 0, ""
+        if self.SIGNAL_MODE == "pullback_continuation" and continuation != 0:
+            if self._eligible(state, continuation, final["close"]):
+                return "enter", continuation, "confirmed pullback resumption"
+        if self.SIGNAL_MODE == "reversal" and (previous_direction == 0 or flipped):
+            if eligible:
+                state["ema_wait"] = 0
+                return "enter", direction, "Renko reversal"
+            state["ema_wait"] = direction
+        if state["ema_wait"] == direction and eligible:
+            state["ema_wait"] = 0
+            return "enter", direction, "delayed EMA alignment"
+        return "none", 0, ""
+
+    def _process_chart(self, state, data, traded, update_annual):
+        bar = self._bar(data)
+        if bar is None:
+            return None
+        last_key = self.last_processed if traded else self.next_last_processed
+        if last_key is not None and bar["timestamp"] == last_key:
+            return None
+        if traded:
+            self.last_processed = bar["timestamp"]
+        else:
+            self.next_last_processed = bar["timestamp"]
+        size = self._size_before(state, bar)
+        atr_before = state["atr"] if state["atr_count"] >= self.ATR_PERIOD else None
+        self._observe(state, bar, update_annual)
+        if size is None or size <= 0:
+            return None
+        bricks, previous_direction = self._make_bricks(state, bar, size)
+        if not traded:
+            if bricks:
+                for brick in bricks:
+                    self._ema_update(state, brick["close"])
+            return None
+        self.last_box_size = size
+        if not bricks:
+            self._update_price_box_trail(size)
+            return None
+        decision = self._decision(state, bricks, previous_direction)
+        return {
+            "bar": bar,
+            "bricks": bricks,
+            "decision": decision,
+            "atr": atr_before,
+            "size": size,
+        }
+
+    def _can_enter(self):
+        if self.MAX_ENTRIES > 0 and self.entries_today >= self.MAX_ENTRIES:
+            return False
+        if self.CUTOFF_HOUR >= 0:
+            cutoff = datetime.time(self.CUTOFF_HOUR, self.CUTOFF_MINUTE)
+            if self.candleTime > cutoff:
+                return False
+        return self.position == [] and self._triggers == [] and self.direction == 0
+
+    def _add_leg(self, direction, option_type, side, reason):
+        leg = self.add_managed_leg(
+            side=side,
+            option_type=option_type,
+            lots=self.LOTS,
+            strike_selection={
+                "strikeBy": "moneyness fut",
+                "strikeVal": 0,
+                "asof": "None",
+                "roundoff": None,
+            },
+            exp={"expType": self.EXPIRY, "expNo": 0},
+            stop_loss={"isSL": False, "SLon": "%", "SLvalue": 0},
+            target={"isTarget": False, "targetOn": "val", "targetValue": 0},
+            trailing_stop_loss={
+                "isTrailSL": False,
+                "trailSLon": "val",
+                "trailSL_X": 0,
+                "trailSL_Y": 0,
+            },
+            stop_loss_reentry={
+                "isReEntry": False,
+                "reEntryOn": "asap",
+                "reEntryVal": 0,
+                "reEntryMaxNo": 0,
+            },
+            target_reentry={
+                "isReEntry": False,
+                "reEntryOn": "asap",
+                "reEntryVal": 0,
+                "reEntryMaxNo": 0,
+            },
+            wait_trade={"isWT": False, "wtOn": "val-up", "wtVal": 0, "triggers": []},
+            segment="OPT",
+            entry_validity="DAY",
+            square_off="this",
+            remark=reason,
+            tag=f"renko_{direction}_{option_type}",
+            leg_name=f"renko_{direction}_{option_type}",
+            auto_rollover=self.POSITIONAL,
+        )
+        self.actions_all["act_entry"]["legs"].append(leg)
+
+    def _enter(self, direction, price, box_size, reason, state):
+        if not self._can_enter():
+            return False
+        detail = (
+            f"{reason} dir={direction} fut={price:.2f} box={box_size:.2f} "
+            f"ema={state['ema'] if state['ema'] is not None else 'NA'}"
+        )
+        if direction > 0:
+            self._add_leg(direction, "CE", "buy", detail)
+            self._add_leg(direction, "PE", "sell", detail)
+        else:
+            self._add_leg(direction, "CE", "sell", detail)
+            self._add_leg(direction, "PE", "buy", detail)
+        self.direction = direction
+        self.entries_today += 1
+        state["last_traded"] = direction
+        if self.CONTINUATION_ANCHOR == "last_traded_trend":
+            state["anchor"] = direction
+        self._risk_enter(price, box_size)
+        return True
+
+    def _exit(self, reason):
+        if self.direction == 0:
+            return
+        self.square_off_all_positions(
+            candle="current", turn_off_triggers=True, remark=reason
+        )
+        self.direction = 0
+        self.risk_entry = None
+        self.risk_best = None
+        self.risk_initial = {}
+        self.risk_trailing = {}
+        self.risk_opposite = 0
+
+    def _risk_enter(self, price, box_size):
+        self.risk_entry = price
+        self.risk_best = price
+        self.risk_initial = {}
+        self.risk_trailing = {}
+        self.risk_opposite = 0
+        for stop in self.INITIAL_STOPS:
+            if stop["type"] == "entry_percent":
+                distance = price * float(stop["value"]) / 100.0
+            else:
+                distance = box_size * float(stop["value"])
+            self.risk_initial[stop["type"]] = price - self.direction * distance
+
+    def _active_stop(self):
+        levels = list(self.risk_initial.values()) + list(self.risk_trailing.values())
+        if len(levels) == 0 or self.direction == 0:
+            return None
+        return max(levels) if self.direction > 0 else min(levels)
+
+    def _ratchet(self, name, candidate):
+        if name not in self.risk_trailing:
+            self.risk_trailing[name] = candidate
+        elif self.direction > 0:
+            self.risk_trailing[name] = max(self.risk_trailing[name], candidate)
+        else:
+            self.risk_trailing[name] = min(self.risk_trailing[name], candidate)
+
+    def _update_price_box_trail(self, box_size):
+        if self.direction == 0 or self.risk_best is None:
+            return
+        for stop in self.TRAILING_STOPS:
+            if stop["type"] == "price_box_offset":
+                candidate = self.risk_best - self.direction * box_size * int(stop["boxes"])
+                self._ratchet("price_box_offset", candidate)
+
+    def _brick_risk(self, bricks, atr_value):
+        if self.direction == 0:
+            return False
+        for brick in bricks:
+            if brick["direction"] == self.direction:
+                self.risk_opposite = 0
+                for stop in self.TRAILING_STOPS:
+                    if stop["type"] == "atr_from_brick" and atr_value is not None:
+                        candidate = brick["close"] - self.direction * float(stop["multiplier"]) * atr_value
+                        self._ratchet("atr_from_brick", candidate)
+            else:
+                self.risk_opposite += 1
+        for stop in self.TRAILING_STOPS:
+            if stop["type"] == "opposite_boxes" and self.risk_opposite >= int(stop["boxes"]):
+                self._exit("completed opposite-box TSL")
+                return True
+        return False
+
+    def _check_price_risk(self, bar):
+        if self.direction == 0:
+            return False
+        level = self._active_stop()
+        if level is not None:
+            hit = bar["low"] <= level if self.direction > 0 else bar["high"] >= level
+            if hit:
+                self._exit(f"underlying price stop level={level:.2f}")
+                return True
+        if self.direction > 0:
+            self.risk_best = max(self.risk_best, bar["high"])
+        else:
+            self.risk_best = min(self.risk_best, bar["low"])
+        return False
+
+    def minTrigger(self):
+        if self.day_closed:
+            return
+        if self.candleTime < datetime.time(9, 16):
+            return
+        bar = self._bar(self.dt_fut_1m)
+        if bar is None:
+            return
+        if not self.POSITIONAL and self.candleTime >= datetime.time(self.EXIT_HOUR, self.EXIT_MINUTE):
+            self._exit("intraday configured exit")
+            self.day_closed = True
+            self.stop_backtest()
+            return
+        if self._check_price_risk(bar):
+            return
+        self._update_price_box_trail(self.last_box_size if self.last_box_size is not None else 0)
+        monthly_expiry = self.get_expiry_date(expiry_type="monthly", expiry_number=0)
+        if monthly_expiry == self.currentDay and self.candleTime >= datetime.time(15, 28):
+            self.pending_monthly_promotion = True
+
+    def onCandleClose(self):
+        self._process_chart(self.next_chart, self.dt_fut_next, False, False)
+        update = self._process_chart(self.chart, self.dt_fut, True, True)
+        if update is None:
+            return
+        action, direction, reason = update["decision"]
+        if action == "exit":
+            self._exit(reason)
+            return
+        if action == "reverse":
+            self._exit(reason)
+            self._enter(direction, update["bar"]["close"], update["size"], reason, self.chart)
+            return
+        if action == "enter":
+            self._enter(direction, update["bar"]["close"], update["size"], reason, self.chart)
+            return
+        if self.direction != 0:
+            self._brick_risk(update["bricks"], update["atr"])
+
+    def onEnd(self):
+        pass

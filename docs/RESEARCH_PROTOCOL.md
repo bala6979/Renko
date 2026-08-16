@@ -4,10 +4,14 @@
 
 1. Consume completed one-minute normal candles in exchange order.
 2. Build close-based bricks; never infer the high-low path inside a minute.
-3. For percentage bricks, freeze the size from a prior completed reference.
-4. For ATR bricks, use ATR known before the trading session starts.
+3. For LTP-percentage bricks, use the previous completed source-bar close.
+4. For ATR bricks, use Wilder ATR known before the source bar being processed.
 5. Preserve brick state overnight unless a tested strategy explicitly resets it.
 6. Record source timestamp, brick sequence, size, and every signal decision.
+
+Variable-size grids retain the latest completed Renko close. Every brick emitted
+by one source candle uses one lagged box size; the next completed source candle
+may use a different size.
 
 ## Experiment sequence
 
@@ -34,4 +38,3 @@ A Renko candidate is not promoted merely for higher profit. It must:
 - Pass a final untouched out-of-sample or anchored walk-forward period.
 
 All parameter sweeps remain research candidates until these checks pass.
-

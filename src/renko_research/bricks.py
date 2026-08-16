@@ -15,6 +15,7 @@ class Brick:
     close: Decimal
     direction: int
     sequence: int
+    box_size: Decimal
 
     @property
     def high(self) -> Decimal:
@@ -53,9 +54,18 @@ class RenkoBuilder:
         self.sequence = 0
 
     def update(
-        self, timestamp: datetime, completed_close: Decimal | str | float
+        self,
+        timestamp: datetime,
+        completed_close: Decimal | str | float,
+        *,
+        brick_size: Decimal | str | float | None = None,
     ) -> list[Brick]:
         price = Decimal(str(completed_close))
+        active_size = (
+            self.brick_size if brick_size is None else Decimal(str(brick_size))
+        )
+        if active_size <= 0:
+            raise ValueError("brick_size must be positive")
         if self.last_close is None:
             self.last_close = price
             return []
@@ -65,17 +75,17 @@ class RenkoBuilder:
         if candidate_direction == 0:
             return []
 
-        threshold = self.brick_size
+        threshold = active_size
         if self.direction and candidate_direction != self.direction:
             threshold *= self.reversal_bricks
         if abs(move) < threshold:
             return []
 
-        brick_count = int(abs(move) // self.brick_size)
+        brick_count = int(abs(move) // active_size)
         bricks: list[Brick] = []
         for _ in range(brick_count):
             brick_open = self.last_close
-            brick_close = brick_open + candidate_direction * self.brick_size
+            brick_close = brick_open + candidate_direction * active_size
             self.sequence += 1
             brick = Brick(
                 timestamp=timestamp,
@@ -83,6 +93,7 @@ class RenkoBuilder:
                 close=brick_close,
                 direction=candidate_direction,
                 sequence=self.sequence,
+                box_size=active_size,
             )
             bricks.append(brick)
             self.last_close = brick_close
@@ -90,10 +101,10 @@ class RenkoBuilder:
         return bricks
 
     def build(
-        self, closes: Iterable[tuple[datetime, Decimal | str | float]]
+        self,
+        closes: Iterable[tuple[datetime, Decimal | str | float]],
     ) -> list[Brick]:
         bricks: list[Brick] = []
         for timestamp, close in closes:
             bricks.extend(self.update(timestamp, close))
         return bricks
-

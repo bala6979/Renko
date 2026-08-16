@@ -25,6 +25,18 @@ def test_multi_brick_move_uses_only_completed_close() -> None:
         Decimal("25030"),
     ]
     assert all(brick.timestamp == START for brick in bricks)
+    assert all(brick.box_size == Decimal("10") for brick in bricks)
+
+
+def test_box_size_can_change_without_rebasing_last_close() -> None:
+    builder = RenkoBuilder(10, initial_price=100)
+    first = builder.update(START, 112)
+    second = builder.update(
+        START + timedelta(minutes=1), 122, brick_size=5
+    )
+    assert [brick.close for brick in first] == [Decimal("110")]
+    assert [brick.close for brick in second] == [Decimal("115"), Decimal("120")]
+    assert [brick.box_size for brick in second] == [Decimal("5"), Decimal("5")]
 
 
 def test_reversal_confirmation_is_configurable() -> None:
@@ -46,4 +58,3 @@ def test_invalid_settings_are_rejected() -> None:
 def test_brick_size_helpers_round_to_market_tick() -> None:
     assert percentage_brick(25000, 0.1, 0.05) == Decimal("25.00")
     assert prior_atr_brick(123.4, 0.75, 0.05) == Decimal("92.55")
-

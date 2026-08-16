@@ -6,14 +6,14 @@ source:
   signal_contract: front_month_futures
   rollover_policy: warm_next_preserve_rebase
 renko:
-  box_mode: annual_percent
-  annual_percent: 0.10
+  box_mode: fixed_points
+  fixed_points: 100
   atr_period: 14
   atr_multiplier: 1.0
   reversal_boxes: 2
 signal:
-  mode: pullback_continuation
-  ema_period: 50
+  mode: reversal
+  ema_period: 10
   continuation_anchor: ema_regime
   pullback_min_boxes: 1
   pullback_max_boxes: 3
@@ -28,6 +28,8 @@ risk:
       multiplier: 2.0
     - type: opposite_boxes
       boxes: 2
+    - type: price_box_offset
+      boxes: 3
 execution:
   instrument: synthetic_futures
   expiry: monthly
@@ -36,4 +38,3 @@ execution:
   max_entries_per_day: null
   entry_cutoff: null
   intraday_exit: "15:28"
-

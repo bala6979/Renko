@@ -1,12 +1,40 @@
 underlying: NIFTY
-source_timeframe: 1min
-session: Asia/Kolkata
-brick_sweeps:
-  fixed_percent: [0.05, 0.10, 0.15, 0.20, 0.25]
-  prior_session_atr: [0.50, 0.75, 1.00, 1.25, 1.50]
-reversal_bricks: [1, 2]
-execution_candidates:
-  - monthly_futures
-  - monthly_synthetic
-reporting_capital: 600000
+tick_size: 0.05
+source:
+  timeframe_minutes: 5
+  candle_input: close
+  signal_contract: front_month_futures
+  rollover_policy: warm_next_preserve_rebase
+renko:
+  box_mode: atr
+  atr_period: 14
+  atr_multiplier: 1.0
+  reversal_boxes: 2
+signal:
+  mode: reversal
+  ema_period: 50
+  continuation_anchor: ema_regime
+  pullback_min_boxes: 1
+  pullback_max_boxes: 3
+risk:
+  initial_stops:
+    - type: entry_percent
+      value: 0.5
+    - type: box_offset
+      value: 3
+  trailing_stops:
+    - type: atr_from_brick
+      multiplier: 2.0
+    - type: opposite_boxes
+      boxes: 2
+    - type: price_box_offset
+      boxes: 3
+execution:
+  instrument: synthetic_futures
+  expiry: monthly
+  lots: 2
+  holding: positional
+  max_entries_per_day: null
+  entry_cutoff: null
+  intraday_exit: "15:28"
 
