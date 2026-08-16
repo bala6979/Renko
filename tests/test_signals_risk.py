@@ -93,3 +93,54 @@ def test_opposite_box_tsl_is_completed_box_exit() -> None:
     hit = risk.process_bricks([brick(2, 80, -1)], atr_value=None)
     assert hit is not None
     assert "opposite-box" in hit.reason
+
+
+def test_three_brick_sph_spl_marks_alternating_pivots_and_breaks_out() -> None:
+    engine = SignalEngine(
+        SignalConfig(
+            mode="sph_spl",
+            ema_period=None,
+            pivot_confirmation_boxes=3,
+        )
+    )
+
+    decision = engine.process(
+        [brick(1, 110, 1), brick(2, 100, -1), brick(3, 90, -1), brick(4, 80, -1)]
+    )
+    assert decision.action == SignalAction.NONE
+    assert engine.sph == 110
+    assert [pivot.kind for pivot in engine.last_pivots] == ["SPH"]
+
+    engine.process([brick(5, 90, 1), brick(6, 100, 1), brick(7, 110, 1)])
+    assert engine.spl == 80
+    decision = engine.process([brick(8, 120, 1)])
+    assert decision.action == SignalAction.ENTER_LONG
+    assert decision.direction == 1
+    assert "SPH breakout" in decision.reason
+
+
+def test_sph_spl_break_reverses_an_existing_position() -> None:
+    engine = SignalEngine(
+        SignalConfig(mode="sph_spl", pivot_confirmation_boxes=3)
+    )
+    engine.process(
+        [brick(1, 110, 1), brick(2, 100, -1), brick(3, 90, -1), brick(4, 80, -1)]
+    )
+    engine.process([brick(5, 90, 1), brick(6, 100, 1), brick(7, 110, 1)])
+    decision = engine.process([brick(8, 70, -1)], position_direction=1)
+    assert decision.action == SignalAction.REVERSE_SHORT
+    assert decision.direction == -1
+
+
+def test_sph_spl_level_is_consumed_after_one_breakout() -> None:
+    engine = SignalEngine(
+        SignalConfig(mode="sph_spl", pivot_confirmation_boxes=3)
+    )
+    engine.process(
+        [brick(1, 110, 1), brick(2, 100, -1), brick(3, 90, -1), brick(4, 80, -1)]
+    )
+    engine.process([brick(5, 90, 1), brick(6, 100, 1), brick(7, 110, 1)])
+    first = engine.process([brick(8, 120, 1)])
+    second = engine.process([brick(9, 130, 1)])
+    assert first.action == SignalAction.ENTER_LONG
+    assert second.action == SignalAction.NONE

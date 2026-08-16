@@ -66,3 +66,14 @@ def test_committed_samples_are_generator_outputs() -> None:
     for config_path, output_path, class_name in cases:
         expected = render_volrix_strategy(load_config(ROOT / config_path), class_name=class_name)
         assert (ROOT / output_path).read_text(encoding="utf-8") == expected
+
+
+def test_analysis_generation_records_points_without_option_orders() -> None:
+    code = render_volrix_strategy(
+        load_config(ROOT / "configs/validation/nifty_30m_sphspl_fixed15.yaml"),
+        class_name="NiftyRenkoAnalysis",
+        analysis_only=True,
+    )
+    assert "ANALYSIS_ONLY = True" in code
+    assert 'tag="SPH"' in code
+    assert 'tag="SPL"' in code

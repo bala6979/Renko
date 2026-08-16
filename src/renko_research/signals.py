@@ -28,6 +28,13 @@ class SignalDecision:
     brick_close: float | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class PivotEvent:
+    kind: str
+    price: float
+    brick_sequence: int
+
+
 class SignalEngine:
     def __init__(self, config: SignalConfig) -> None:
         self.config = config
@@ -37,6 +44,18 @@ class SignalEngine:
         self.continuation_anchor = 0
         self.counter_boxes = 0
         self.ema_wait_direction = 0
+        self.sph: float | None = None
+        self.spl: float | None = None
+        self.can_mark_sph = True
+        self.can_mark_spl = False
+        self.highest_since_pivot: tuple[float, int] | None = None
+        self.lowest_since_pivot: tuple[float, int] | None = None
+        self.same_direction_count = 0
+        self.last_pivots: list[PivotEvent] = []
+        self.sph_version = 0
+        self.spl_version = 0
+        self.used_sph_version = 0
+        self.used_spl_version = 0
 
     def notify_entry(self, direction: int) -> None:
         self.last_traded_direction = direction
@@ -63,6 +82,9 @@ class SignalEngine:
     ) -> SignalDecision:
         if not bricks:
             return SignalDecision(SignalAction.NONE)
+
+        if self.config.mode == "sph_spl":
+            return self._process_sph_spl(bricks, position_direction)
 
         previous_direction = self.brick_direction
         continuation_candidate = 0
@@ -149,6 +171,107 @@ class SignalEngine:
             SignalAction.NONE,
             ema_value=ema_value,
             brick_close=float(final.close),
+        )
+
+    def _process_sph_spl(
+        self, bricks: list[Brick], position_direction: int
+    ) -> SignalDecision:
+        self.last_pivots = []
+        breakout = 0
+        breakout_level: float | None = None
+        previous_brick_direction = self.brick_direction
+
+        for brick in bricks:
+            if self.ema is not None:
+                self.ema.update(brick.close)
+            high = float(brick.high)
+            low = float(brick.low)
+            if self.highest_since_pivot is None or high > self.highest_since_pivot[0]:
+                self.highest_since_pivot = (high, brick.sequence)
+            if self.lowest_since_pivot is None or low < self.lowest_since_pivot[0]:
+                self.lowest_since_pivot = (low, brick.sequence)
+
+            if brick.direction == previous_brick_direction:
+                self.same_direction_count += 1
+            else:
+                self.same_direction_count = 1
+            previous_brick_direction = brick.direction
+
+            if (
+                self.sph is not None
+                and self.sph_version > self.used_sph_version
+                and float(brick.close) > self.sph
+            ):
+                breakout = 1
+                breakout_level = self.sph
+                self.used_sph_version = self.sph_version
+            elif (
+                self.spl is not None
+                and self.spl_version > self.used_spl_version
+                and float(brick.close) < self.spl
+            ):
+                breakout = -1
+                breakout_level = self.spl
+                self.used_spl_version = self.spl_version
+
+            required = self.config.pivot_confirmation_boxes
+            if brick.direction < 0 and self.can_mark_sph and self.same_direction_count >= required:
+                assert self.highest_since_pivot is not None
+                self.sph = self.highest_since_pivot[0]
+                self.sph_version += 1
+                self.last_pivots.append(
+                    PivotEvent("SPH", self.sph, self.highest_since_pivot[1])
+                )
+                self.can_mark_sph = False
+                self.can_mark_spl = True
+                self.highest_since_pivot = (high, brick.sequence)
+                self.lowest_since_pivot = (low, brick.sequence)
+            elif brick.direction > 0 and self.can_mark_spl and self.same_direction_count >= required:
+                assert self.lowest_since_pivot is not None
+                self.spl = self.lowest_since_pivot[0]
+                self.spl_version += 1
+                self.last_pivots.append(
+                    PivotEvent("SPL", self.spl, self.lowest_since_pivot[1])
+                )
+                self.can_mark_spl = False
+                self.can_mark_sph = True
+                self.highest_since_pivot = (high, brick.sequence)
+                self.lowest_since_pivot = (low, brick.sequence)
+
+            self.brick_direction = brick.direction
+
+        final = bricks[-1]
+        ema_value = float(self.ema.value) if self.ema and self.ema.value is not None else None
+        if breakout == 0 or breakout == position_direction:
+            return SignalDecision(
+                SignalAction.NONE,
+                ema_value=ema_value,
+                brick_close=float(final.close),
+            )
+
+        eligible, ema_value = self._eligible(breakout, final)
+        level_name = "SPH" if breakout > 0 else "SPL"
+        reason = f"{level_name} breakout level={breakout_level:.2f}"
+        if not eligible:
+            if position_direction:
+                return SignalDecision(
+                    SignalAction.EXIT,
+                    0,
+                    f"EMA-rejected {reason}",
+                    ema_value,
+                    float(final.close),
+                )
+            return SignalDecision(
+                SignalAction.NONE,
+                ema_value=ema_value,
+                brick_close=float(final.close),
+            )
+        return SignalDecision(
+            self._entry_action(breakout, reverse=position_direction != 0),
+            breakout,
+            reason,
+            ema_value,
+            float(final.close),
         )
 
     def _anchor_for(self, brick: Brick) -> int:

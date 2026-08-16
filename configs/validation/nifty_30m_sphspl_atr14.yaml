@@ -1,0 +1,29 @@
+underlying: NIFTY
+tick_size: 0.05
+source:
+  timeframe_minutes: 30
+  candle_input: close
+  signal_contract: front_month_futures
+  rollover_policy: warm_next_preserve_rebase
+renko:
+  box_mode: atr
+  atr_period: 14
+  atr_multiplier: 1.0
+  reversal_boxes: 2
+signal:
+  mode: sph_spl
+  ema_period: null
+  pivot_confirmation_boxes: 3
+risk:
+  initial_stops:
+    - type: entry_percent
+      value: 0.5
+  trailing_stops: []
+execution:
+  instrument: synthetic_futures
+  expiry: monthly
+  lots: 2
+  holding: positional
+  max_entries_per_day: null
+  entry_cutoff: null
+  intraday_exit: "15:28"

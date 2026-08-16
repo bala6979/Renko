@@ -16,9 +16,14 @@ def main() -> None:
     parser.add_argument("config", type=Path)
     parser.add_argument("output", type=Path)
     parser.add_argument("--class-name", default="ParameterizedRenkoSynthetic")
+    parser.add_argument("--analysis-only", action="store_true")
     args = parser.parse_args()
     config = load_config(args.config)
-    code = render_volrix_strategy(config, class_name=args.class_name)
+    code = render_volrix_strategy(
+        config,
+        class_name=args.class_name,
+        analysis_only=args.analysis_only,
+    )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(code, encoding="utf-8")
 

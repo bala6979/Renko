@@ -118,6 +118,16 @@ class RenkoStrategyEngine:
             bricks,
             position_direction=self.position_direction,
         )
+        for pivot in self.signals.last_pivots:
+            self._record(
+                candle.timestamp,
+                "pivot",
+                pivot=pivot.kind,
+                price=pivot.price,
+                brick_sequence=pivot.brick_sequence,
+                sph=self.signals.sph,
+                spl=self.signals.spl,
+            )
         if decision.action != SignalAction.NONE:
             self._apply_decision(candle, bricks[-1], decision)
         elif self.position_direction:

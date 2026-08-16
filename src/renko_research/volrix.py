@@ -11,7 +11,10 @@ TEMPLATE_PATH = Path(__file__).resolve().parents[2] / "strategies" / "volrix" / 
 
 
 def render_volrix_strategy(
-    config: RenkoStrategyConfig, *, class_name: str = "ParameterizedRenkoSynthetic"
+    config: RenkoStrategyConfig,
+    *,
+    class_name: str = "ParameterizedRenkoSynthetic",
+    analysis_only: bool = False,
 ) -> str:
     config.validate()
     cutoff = config.execution.cutoff_time
@@ -31,6 +34,7 @@ def render_volrix_strategy(
         "__CONTINUATION_ANCHOR__": repr(config.signal.continuation_anchor),
         "__PULLBACK_MIN__": str(config.signal.pullback_min_boxes),
         "__PULLBACK_MAX__": str(config.signal.pullback_max_boxes),
+        "__PIVOT_CONFIRMATION_BOXES__": str(config.signal.pivot_confirmation_boxes),
         "__INITIAL_STOPS__": repr(tuple(_stop_dict(item) for item in config.risk.initial_stops)),
         "__TRAILING_STOPS__": repr(tuple(_stop_dict(item) for item in config.risk.trailing_stops)),
         "__EXPIRY__": repr(config.execution.expiry),
@@ -42,6 +46,7 @@ def render_volrix_strategy(
         "__EXIT_HOUR__": str(config.execution.exit_time.hour),
         "__EXIT_MINUTE__": str(config.execution.exit_time.minute),
         "__TICK_SIZE__": repr(config.tick_size),
+        "__ANALYSIS_ONLY__": repr(analysis_only),
     }
     rendered = TEMPLATE_PATH.read_text(encoding="utf-8")
     for token, value in replacements.items():

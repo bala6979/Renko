@@ -56,3 +56,6 @@ only.
 Detailed field behavior is in
 [docs/CONFIGURATION.md](docs/CONFIGURATION.md). The initial runtime evidence is
 recorded in [docs/VOLRIX_SAMPLE_VALIDATION.md](docs/VOLRIX_SAMPLE_VALIDATION.md).
+
+The NIFTY 30-minute Renko SPH/SPL August reconciliation is recorded in
+[docs/NIFTY_AUG_2026_VALIDATION.md](docs/NIFTY_AUG_2026_VALIDATION.md).

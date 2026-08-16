@@ -13,6 +13,7 @@ class BankNiftyRenkoSample(Strategy):
     CONTINUATION_ANCHOR = 'ema_regime'
     PULLBACK_MIN = 1
     PULLBACK_MAX = 3
+    PIVOT_CONFIRMATION_BOXES = 3
     INITIAL_STOPS = ({'type': 'entry_percent', 'value': 0.5, 'multiplier': None, 'boxes': None}, {'type': 'box_offset', 'value': 3, 'multiplier': None, 'boxes': None})
     TRAILING_STOPS = ({'type': 'atr_from_brick', 'value': None, 'multiplier': 2.0, 'boxes': None}, {'type': 'opposite_boxes', 'value': None, 'multiplier': None, 'boxes': 2})
     EXPIRY = 'monthly'
@@ -24,6 +25,7 @@ class BankNiftyRenkoSample(Strategy):
     EXIT_HOUR = 15
     EXIT_MINUTE = 28
     TICK_SIZE = 0.05
+    ANALYSIS_ONLY = False
 
     def init(self):
         self._continueVars = True
@@ -59,6 +61,19 @@ class BankNiftyRenkoSample(Strategy):
             "last_traded": 0,
             "anchor": 0,
             "counter": 0,
+            "sph": None,
+            "spl": None,
+            "can_sph": True,
+            "can_spl": False,
+            "highest": None,
+            "highest_seq": None,
+            "lowest": None,
+            "lowest_seq": None,
+            "same_count": 0,
+            "sph_version": 0,
+            "spl_version": 0,
+            "used_sph_version": 0,
+            "used_spl_version": 0,
         }
 
     def data_init(self):
@@ -226,6 +241,8 @@ class BankNiftyRenkoSample(Strategy):
         return state["anchor"]
 
     def _decision(self, state, bricks, previous_direction):
+        if self.SIGNAL_MODE == "sph_spl":
+            return self._sph_spl_decision(state, bricks, previous_direction)
         continuation = 0
         for brick in bricks:
             self._ema_update(state, brick["close"])
@@ -262,6 +279,78 @@ class BankNiftyRenkoSample(Strategy):
             state["ema_wait"] = 0
             return "enter", direction, "delayed EMA alignment"
         return "none", 0, ""
+
+    def _sph_spl_decision(self, state, bricks, previous_direction):
+        breakout = 0
+        breakout_level = None
+        prior_direction = previous_direction
+        for brick in bricks:
+            self._ema_update(state, brick["close"])
+            high = max(brick["open"], brick["close"])
+            low = min(brick["open"], brick["close"])
+            if state["highest"] is None or high > state["highest"]:
+                state["highest"] = high
+                state["highest_seq"] = brick["sequence"]
+            if state["lowest"] is None or low < state["lowest"]:
+                state["lowest"] = low
+                state["lowest_seq"] = brick["sequence"]
+            if brick["direction"] == prior_direction:
+                state["same_count"] += 1
+            else:
+                state["same_count"] = 1
+            prior_direction = brick["direction"]
+
+            if state["sph"] is not None and state["sph_version"] > state["used_sph_version"] and brick["close"] > state["sph"]:
+                breakout = 1
+                breakout_level = state["sph"]
+                state["used_sph_version"] = state["sph_version"]
+            elif state["spl"] is not None and state["spl_version"] > state["used_spl_version"] and brick["close"] < state["spl"]:
+                breakout = -1
+                breakout_level = state["spl"]
+                state["used_spl_version"] = state["spl_version"]
+
+            if brick["direction"] < 0 and state["can_sph"] and state["same_count"] >= self.PIVOT_CONFIRMATION_BOXES:
+                state["sph"] = state["highest"]
+                state["sph_version"] += 1
+                if self.ANALYSIS_ONLY:
+                    self.addPoint(
+                        tag="SPH",
+                        point=state["sph"],
+                        remark=f"confirmed brick={state['highest_seq']} box={self.last_box_size}",
+                    )
+                state["can_sph"] = False
+                state["can_spl"] = True
+                state["highest"] = high
+                state["highest_seq"] = brick["sequence"]
+                state["lowest"] = low
+                state["lowest_seq"] = brick["sequence"]
+            elif brick["direction"] > 0 and state["can_spl"] and state["same_count"] >= self.PIVOT_CONFIRMATION_BOXES:
+                state["spl"] = state["lowest"]
+                state["spl_version"] += 1
+                if self.ANALYSIS_ONLY:
+                    self.addPoint(
+                        tag="SPL",
+                        point=state["spl"],
+                        remark=f"confirmed brick={state['lowest_seq']} box={self.last_box_size}",
+                    )
+                state["can_spl"] = False
+                state["can_sph"] = True
+                state["highest"] = high
+                state["highest_seq"] = brick["sequence"]
+                state["lowest"] = low
+                state["lowest_seq"] = brick["sequence"]
+            state["direction"] = brick["direction"]
+
+        if breakout == 0 or breakout == self.direction:
+            return "none", 0, ""
+        final = bricks[-1]
+        if not self._eligible(state, breakout, final["close"]):
+            if self.direction != 0:
+                return "exit", 0, "EMA-rejected SPH/SPL breakout"
+            return "none", 0, ""
+        level_name = "SPH" if breakout > 0 else "SPL"
+        reason = f"{level_name} breakout level={breakout_level:.2f}"
+        return ("reverse" if self.direction != 0 else "enter"), breakout, reason
 
     def _process_chart(self, state, data, traded, update_annual):
         bar = self._bar(data)
@@ -357,6 +446,17 @@ class BankNiftyRenkoSample(Strategy):
             f"{reason} dir={direction} fut={price:.2f} box={box_size:.2f} "
             f"ema={state['ema'] if state['ema'] is not None else 'NA'}"
         )
+        if self.ANALYSIS_ONLY:
+            self.direction = direction
+            self.entries_today += 1
+            state["last_traded"] = direction
+            self._risk_enter(price, box_size)
+            self.addPoint(
+                tag="LONG" if direction > 0 else "SHORT",
+                point=price,
+                remark=f"{reason} stop={self._active_stop():.2f}",
+            )
+            return True
         if direction > 0:
             self._add_leg(direction, "CE", "buy", detail)
             self._add_leg(direction, "PE", "sell", detail)
@@ -373,6 +473,20 @@ class BankNiftyRenkoSample(Strategy):
 
     def _exit(self, reason):
         if self.direction == 0:
+            return
+        if self.ANALYSIS_ONLY:
+            bar = self._bar(self.dt_fut_1m)
+            self.addPoint(
+                tag="EXIT",
+                point=bar["close"] if bar is not None else self.risk_entry,
+                remark=reason,
+            )
+            self.direction = 0
+            self.risk_entry = None
+            self.risk_best = None
+            self.risk_initial = {}
+            self.risk_trailing = {}
+            self.risk_opposite = 0
             return
         self.square_off_all_positions(
             candle="current", turn_off_triggers=True, remark=reason

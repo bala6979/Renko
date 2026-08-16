@@ -1,21 +1,21 @@
-class NiftyRenkoSample(Strategy):
+class Nifty30mRenkoSphSplLtp005Analysis(Strategy):
     UNDERLYING = 'NIFTY'
-    TIMEFRAME = 5
-    BOX_MODE = 'atr'
+    TIMEFRAME = 30
+    BOX_MODE = 'ltp_percent'
     FIXED_POINTS = 0.0
-    LTP_PERCENT = 0.0
+    LTP_PERCENT = 0.05
     ANNUAL_PERCENT = 0.0
     ATR_PERIOD = 14
     ATR_MULTIPLIER = 1.0
     REVERSAL_BOXES = 2
-    SIGNAL_MODE = 'reversal'
-    EMA_PERIOD = 50
+    SIGNAL_MODE = 'sph_spl'
+    EMA_PERIOD = 0
     CONTINUATION_ANCHOR = 'ema_regime'
     PULLBACK_MIN = 1
     PULLBACK_MAX = 3
     PIVOT_CONFIRMATION_BOXES = 3
-    INITIAL_STOPS = ({'type': 'entry_percent', 'value': 0.5, 'multiplier': None, 'boxes': None}, {'type': 'box_offset', 'value': 3, 'multiplier': None, 'boxes': None})
-    TRAILING_STOPS = ({'type': 'atr_from_brick', 'value': None, 'multiplier': 2.0, 'boxes': None}, {'type': 'opposite_boxes', 'value': None, 'multiplier': None, 'boxes': 2}, {'type': 'price_box_offset', 'value': None, 'multiplier': None, 'boxes': 3})
+    INITIAL_STOPS = ({'type': 'entry_percent', 'value': 0.5, 'multiplier': None, 'boxes': None},)
+    TRAILING_STOPS = ()
     EXPIRY = 'monthly'
     LOTS = 2
     POSITIONAL = True
@@ -25,7 +25,7 @@ class NiftyRenkoSample(Strategy):
     EXIT_HOUR = 15
     EXIT_MINUTE = 28
     TICK_SIZE = 0.05
-    ANALYSIS_ONLY = False
+    ANALYSIS_ONLY = True
 
     def init(self):
         self._continueVars = True

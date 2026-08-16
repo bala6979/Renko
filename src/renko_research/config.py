@@ -12,7 +12,7 @@ import yaml
 
 SUPPORTED_TIMEFRAMES = {1, 2, 3, 5, 10, 15, 20, 25, 30, 45, 60, 120, 240}
 BOX_MODES = {"fixed_points", "ltp_percent", "atr", "annual_percent"}
-SIGNAL_MODES = {"reversal", "pullback_continuation"}
+SIGNAL_MODES = {"reversal", "pullback_continuation", "sph_spl"}
 CONTINUATION_ANCHORS = {"last_traded_trend", "ema_regime"}
 INITIAL_STOP_TYPES = {"entry_percent", "box_offset"}
 TRAILING_STOP_TYPES = {"atr_from_brick", "opposite_boxes", "price_box_offset"}
@@ -83,6 +83,7 @@ class SignalConfig:
     continuation_anchor: str = "ema_regime"
     pullback_min_boxes: int = 1
     pullback_max_boxes: int = 3
+    pivot_confirmation_boxes: int = 3
 
     def validate(self) -> None:
         if self.mode not in SIGNAL_MODES:
@@ -94,6 +95,7 @@ class SignalConfig:
         _positive(self.pullback_min_boxes, "pullback_min_boxes")
         if self.pullback_max_boxes < self.pullback_min_boxes:
             raise ValueError("pullback_max_boxes must be >= pullback_min_boxes")
+        _positive(self.pivot_confirmation_boxes, "pivot_confirmation_boxes")
         if self.mode == "pullback_continuation":
             if self.continuation_anchor == "ema_regime" and self.ema_period is None:
                 raise ValueError("ema_regime continuation requires ema_period")
